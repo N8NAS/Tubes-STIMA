@@ -120,30 +120,57 @@ public class RobotPlayer {
      * Jika ada, robot akan mampir mendekat. Fungsi ini void (tidak menghentikan turn).
      */
     public static boolean tryRefillPaint(RobotController rc) throws GameActionException {
-        double paintThreshold = 0.3; 
+        double paintThreshold = 0.2; // Mulai cari Tower saat bensin tinggal 30%
         
         if (rc.getPaint() < rc.getType().paintCapacity * paintThreshold) {
+            // Cari tower terdekat
             RobotInfo[] nearbyAllies = rc.senseNearbyRobots(-1, rc.getTeam());
             
             for (RobotInfo ally : nearbyAllies) {
                 UnitType type = ally.getType();
-                if (type == UnitType.LEVEL_ONE_PAINT_TOWER || type == UnitType.LEVEL_TWO_PAINT_TOWER || type == UnitType.LEVEL_THREE_PAINT_TOWER) { 
+                if (type == UnitType.LEVEL_ONE_PAINT_TOWER || 
+                    type == UnitType.LEVEL_TWO_PAINT_TOWER || 
+                    type == UnitType.LEVEL_THREE_PAINT_TOWER) { // Cara lebih rapi mengecek apakah itu Tower
                     
-                    if (rc.getLocation().distanceSquaredTo(ally.getLocation()) <= 8) {
-                        rc.setIndicatorString("Mampir isi cat!");
+                    int distSq = rc.getLocation().distanceSquaredTo(ally.getLocation());
+                    
+                    // 1. CEK JARAK: Harus <= 2 agar bisa transfer!
+                    if (distSq <= 2) {
+                        rc.setIndicatorString("Menyedot Cat!");
                         
-                        // Jika belum bersebelahan, jalan mendekat ke tower
-                        if (rc.getLocation().distanceSquaredTo(ally.getLocation()) > 2) {
-                            if (rc.isMovementReady()) {
-                                Direction dirToTower = rc.getLocation().directionTo(ally.getLocation());
-                                if (dirToTower != Direction.CENTER && rc.canMove(dirToTower)) {
-                                    rc.move(dirToTower);
-                                }
-                            }
+                        int amountNeeded = rc.getType().paintCapacity - rc.getPaint();
+                        
+                        // 2. TENTUKAN JUMLAH: Ambil sebutuhnya, atau sedot SEMUA sisa cat tower jika tidak cukup
+                        int amountToTake = Math.min(amountNeeded, ally.paintAmount);
+                        
+                        // 3. ROBOT MENYEDOT CAT: Gunakan nilai NEGATIF (-amountToTake)
+                        if (amountToTake > 0 && rc.canTransferPaint(ally.getLocation(), -amountToTake)) {
+                            rc.transferPaint(ally.getLocation(), -amountToTake);
+                            System.out.println(rc.getType() + " berhasil menyedot " + amountToTake + " cat dari Tower!");
                         }
                         
-                        // KUNCI: Beritahu robot bahwa ia sedang sibuk urusan Tower!
+                        return true; // Sudah nyampe, tetap true agar tidak kelayapan
+                    } 
+                    // 3. JIKA MASIH JAUH, JALAN MENDEKAT
+                    else {
+                        rc.setIndicatorString("OTW Tower!");
+                        if (rc.isMovementReady()) {
+                            Direction dirToTower = rc.getLocation().directionTo(ally.getLocation());
+                            
+                            Direction[] tryDirs = {dirToTower, dirToTower.rotateLeft(), dirToTower.rotateRight()};
+                            Direction bestDir = getValidMove(rc, tryDirs);
+                            
+                            if (bestDir != null) {
+                                rc.move(bestDir);
+                            }
+                        }
                         return true; 
+                    }
+                }
+                if(type.isTowerType()){
+                    if (rc.getChips() > 2500 && rc.canUpgradeTower(ally.getLocation())) {
+                        rc.upgradeTower(ally.getLocation());
+                        System.out.println("UPGRADE! " + rc.getType() + " menaikkan level Tower di " + ally.getLocation());
                     }
                 }
             }
@@ -193,29 +220,6 @@ public class RobotPlayer {
             rc.setIndicatorString("SPLASHER NOT IMPLEMENTED YET");
             spawnedRobots++;
         }
-        RobotInfo[] nearbyAllies = rc.senseNearbyRobots(2, rc.getTeam()); 
-    
-        for (RobotInfo ally : nearbyAllies) {
-            UnitType type = ally.getType();
-            
-            // Pastikan yang ditransfer adalah pasukan tempur, BUKAN sesama Tower
-            if (type == UnitType.SOLDIER || type == UnitType.SPLASHER) {
-                
-                // Tentukan jumlah cat yang ingin ditransfer per turn (misalnya: 50 cat)
-                // Pastikan tidak melebihi cat yang dimiliki Tower saat ini
-                int amountToTransfer = Math.min(50, rc.getPaint());
-                
-                // Jika Tower punya cat dan bisa mentransfernya ke lokasi tersebut
-                if (amountToTransfer > 0 && rc.canTransferPaint(ally.getLocation(), amountToTransfer)) {
-                    rc.transferPaint(ally.getLocation(), amountToTransfer);
-                    rc.setIndicatorString("Mengisi bensin " + type + " sebanyak " + amountToTransfer);
-                    
-                    // Hentikan loop agar Tower hanya fokus melayani 1 robot per turn
-                    break; 
-                }
-            }
-        }
-        // Read incoming messages
         Message[] messages = rc.readMessages(-1);
         for (Message m : messages) {
             System.out.println("Tower received message: '#" + m.getSenderID() + " " + m.getBytes());
@@ -224,7 +228,7 @@ public class RobotPlayer {
         // TODO: can we attack other bots?
     }
     public static void runSplasher(RobotController rc) throws GameActionException {
-        tryRefillPaint(rc);
+        boolean isRefilling = tryRefillPaint(rc);
         if(!hasAssignedDirection){
             // 1. Dapatkan posisi saat ini dan posisi tengah peta
             MapLocation myLoc = rc.getLocation();
@@ -258,7 +262,7 @@ public class RobotPlayer {
             // 3. Logika Probabilitas (Roll Dadu 0-99)
             int roll = rng.nextInt(100);
             
-            if (roll < 70) {
+            if (roll < 60) {
                 // Peluang 70%: Pilih acak 1 dari 3 arah ke depan (masing-masing peluang 1/3)
                 targetDir = forwardDirs[rng.nextInt(forwardDirs.length)];
                 rc.setIndicatorString("70% Area (Forward)");
@@ -279,9 +283,13 @@ public class RobotPlayer {
             hasAssignedDirection = false; 
         }
         
-        // 5. Eksekusi Jalan
-        if (moveDir != null && rc.canMove(moveDir)) {
-            rc.move(moveDir);
+        // ==========================================================
+        // 2. UBAH BAGIAN INI: Cek isRefilling sebelum memanggil rc.move
+        // ==========================================================
+        if (!isRefilling) { // <--- REM TANGAN: Jangan jalan kalau sedang isi bensin!
+            if (moveDir != null && rc.canMove(moveDir)) {
+                rc.move(moveDir);
+            }
         }
         
         // 6. Eksekusi Pengecatan (Sambil Jalan)
@@ -337,8 +345,9 @@ public class RobotPlayer {
         if (curRuin != null && curRuin != lastRuin){
             MapLocation targetLoc = curRuin.getMapLocation();
             Direction dir = rc.getLocation().directionTo(targetLoc);
-            if (rc.canMove(dir))
+            if (!isRefilling && rc.canMove(dir)) {
                 rc.move(dir);
+            }
             // Mark the pattern we need to draw to build a tower here if we haven't already.
             MapLocation shouldBeMarked = curRuin.getMapLocation().subtract(dir);
             
@@ -349,7 +358,7 @@ public class RobotPlayer {
                 UnitType typeToBuild;
                 int roll = rng.nextInt(100);
                 
-                if (roll < 83) {
+                if (roll < 58) {
                     typeToBuild = UnitType.LEVEL_ONE_PAINT_TOWER; // Peluang 50%
                 } else {
                     typeToBuild = UnitType.LEVEL_ONE_MONEY_TOWER; // Peluang 50%
@@ -432,16 +441,15 @@ public class RobotPlayer {
         }
         Direction moveDir = targetDir;
         if (!rc.canMove(moveDir)) {
-            // Coba cari jalan acak lain untuk turn ini agar tidak diam
             moveDir = getRandomValidMove(rc);
-            
-            // Hapus ingatan! Agar turn depan dia menghitung ulang arah 70/30 yang baru
             hasAssignedDirection = false; 
         }
         
-        // 5. Eksekusi Jalan
-        if (moveDir != null && rc.canMove(moveDir)) {
-            rc.move(moveDir);
+        // 5. Eksekusi Jalan -> TAMBAHKAN PENGECEKAN DI SINI!
+        if (!isRefilling) {
+            if (moveDir != null && rc.canMove(moveDir)) {
+                rc.move(moveDir);
+            }
         }
         // Try to paint beneath us as we walk to avoid paint penalties.
         // Avoiding wasting paint by re-painting our own tiles.
@@ -514,9 +522,28 @@ public class RobotPlayer {
                     dirToCenter.rotateLeft(), 
                     dirToCenter.rotateRight()
                 };
-                
+                Direction[] otherDirs = {
+                dirToCenter.rotateLeft().rotateLeft(),
+                dirToCenter.rotateLeft().rotateLeft().rotateLeft(),
+                dirToCenter.opposite(),
+                dirToCenter.rotateRight().rotateRight(),
+                dirToCenter.rotateRight().rotateRight().rotateRight()
+            };
+            
+            // 3. Logika Probabilitas (Roll Dadu 0-99)
+            int roll = rng.nextInt(100);
+            
+            if (roll < 90) {
+                // Peluang 70%: Pilih acak 1 dari 3 arah ke depan (masing-masing peluang 1/3)
                 targetDir = forwardDirs[rng.nextInt(forwardDirs.length)];
-                hasAssignedDirection = true;
+                rc.setIndicatorString("70% Area (Forward)");
+            } else {
+                // Peluang 30%: Pilih acak 1 dari 5 arah lainnya (masing-masing peluang 1/5)
+                targetDir = otherDirs[rng.nextInt(otherDirs.length)];
+                rc.setIndicatorString("30% Area (Opposite)");
+            }
+            hasAssignedDirection = true;
+                
             }
             // Gunakan arah yang sudah disimpan di memori
             moveDir = targetDir;

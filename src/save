@@ -352,7 +352,7 @@ public class RobotPlayer {
                 UnitType typeToBuild;
                 int roll = rng.nextInt(100);
                 
-                if (roll < 83) {
+                if (roll < 58) {
                     typeToBuild = UnitType.LEVEL_ONE_PAINT_TOWER; // Peluang 50%
                 } else {
                     typeToBuild = UnitType.LEVEL_ONE_MONEY_TOWER; // Peluang 50%
@@ -386,6 +386,38 @@ public class RobotPlayer {
                 System.out.println("Berhasil membangun Money Tower di " + targetLoc + "!");
                 lastRuin = curRuin;
             }
+        }
+        RobotInfo targetEnemyTower = null;
+
+        // 1. Pindai semua robot musuh dalam jarak pandang
+        RobotInfo[] visibleEnemies = rc.senseNearbyRobots(-1, rc.getTeam().opponent());
+
+        // 2. Cari robot yang merupakan tipe Tower
+        for (RobotInfo enemy : visibleEnemies) {
+            if (enemy.getType().isTowerType()) {
+                targetEnemyTower = enemy;
+                break; // Dapatkan tower pertama yang terdeteksi
+            }
+        }
+
+        // 3. Jika Tower musuh ditemukan, lakukan aksi
+        if (targetEnemyTower != null) {
+            MapLocation towerLoc = targetEnemyTower.getLocation();
+            Direction dirToTower = rc.getLocation().directionTo(towerLoc);
+            
+            // A. Coba bergerak mendekati tower (jika belum cooldown jalan & tidak terhalang)
+            if (rc.canMove(dirToTower)) {
+                rc.move(dirToTower);
+            }
+            
+            // B. Coba serang tower (jika jaraknya sudah masuk jangkauan attack)
+            if (rc.canAttack(towerLoc)) {
+                rc.attack(towerLoc);
+                rc.setIndicatorString("Menyerang Tower Musuh di " + towerLoc);
+            }
+            
+            // Jika Anda memakai ini di dalam fungsi terpisah, Anda bisa me-return true di sini
+            // return true; 
         }
 
         // Move and attack randomly if no objective.
@@ -448,10 +480,11 @@ public class RobotPlayer {
         // Try to paint beneath us as we walk to avoid paint penalties.
         // Avoiding wasting paint by re-painting our own tiles.
         MapInfo currentTile = rc.senseMapInfo(rc.getLocation());
-        if (!currentTile.getPaint().isAlly() && rc.canAttack(rc.getLocation())){
+        if ((!currentTile.getPaint().isAlly() || !currentTile.getPaint().isEnemy()) && rc.canAttack(rc.getLocation())){
             rc.attack(rc.getLocation());
         }
     }
+
 
 
     /**

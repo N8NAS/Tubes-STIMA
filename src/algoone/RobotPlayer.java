@@ -225,7 +225,24 @@ public class RobotPlayer {
             System.out.println("Tower received message: '#" + m.getSenderID() + " " + m.getBytes());
         }
 
-        // TODO: can we attack other bots?
+        RobotInfo[] enemies = rc.senseNearbyRobots(rc.getType().actionRadiusSquared, rc.getTeam().opponent());
+
+        // 2. Jika ada musuh yang terdeteksi, bersiap menyerang
+        if (enemies.length > 0) {
+            for (RobotInfo enemy : enemies) {
+                MapLocation enemyLoc = enemy.getLocation();
+                
+                // 3. Pastikan tower bisa menembak musuh ini (masuk range & tidak cooldown)
+                if (rc.canAttack(enemyLoc)) {
+                    rc.attack(enemyLoc);
+                    System.out.println("Tower menembak musuh (" + enemy.getType() + ") di " + enemyLoc);
+                    
+                    // Tower biasanya hanya bisa menyerang 1 kali per turn, 
+                    // jadi kita hentikan loop-nya di sini agar hemat bytecode.
+                    break; 
+                }
+            }
+        }
     }
     public static void runSplasher(RobotController rc) throws GameActionException {
         boolean isRefilling = tryRefillPaint(rc);
@@ -332,6 +349,7 @@ public class RobotPlayer {
         MapInfo[] nearbyTiles = rc.senseNearbyMapInfos();
         // Search for a nearby ruin to complete.
         MapInfo curRuin = null;
+        boolean hasEnemyPaint = false;
         for (MapInfo tile : nearbyTiles){
             if (tile.hasRuin()){
                 MapLocation ruinLoc = tile.getMapLocation();
@@ -339,10 +357,24 @@ public class RobotPlayer {
                 // Cek apakah di koordinat reruntuhan ini KOSONG (tidak ada Tower/Robot)
                 if (rc.senseRobotAtLocation(ruinLoc) == null) {
                     curRuin = tile;
+                    MapInfo[] ruinArea = rc.senseNearbyMapInfos(ruinLoc, 8);
+            
+                    for (MapInfo areaTile : ruinArea) {
+                        // Jika ketemu minimal 1 cat musuh di area tersebut
+                        if (areaTile.getPaint().isEnemy()) {
+                            hasEnemyPaint = true;
+                            break; // Hemat komputasi, hentikan pencarian karena sudah pasti ada cat musuh
+                        }
+                    }
+                    // ==================================================
+                    
+                    // Jika Anda hanya butuh 1 Ruin, Anda bisa menambahkan 'break;' di sini
+                    // agar robot tidak perlu repot-repot mengecek Ruin lain yang lebih jauh.
+                    break;
                 }
             }
         }
-        if (curRuin != null && curRuin != lastRuin){
+        if (curRuin != null && curRuin != lastRuin && !hasEnemyPaint){
             MapLocation targetLoc = curRuin.getMapLocation();
             Direction dir = rc.getLocation().directionTo(targetLoc);
             if (!isRefilling && rc.canMove(dir)) {
@@ -393,6 +425,38 @@ public class RobotPlayer {
                 lastRuin = curRuin;
             }
         }
+        // RobotInfo targetEnemyTower = null;
+
+        // // 1. Pindai semua robot musuh dalam jarak pandang
+        // RobotInfo[] visibleEnemies = rc.senseNearbyRobots(-1, rc.getTeam().opponent());
+
+        // // 2. Cari robot yang merupakan tipe Tower
+        // for (RobotInfo enemy : visibleEnemies) {
+        //     if (enemy.getType().isTowerType()) {
+        //         targetEnemyTower = enemy;
+        //         break; // Dapatkan tower pertama yang terdeteksi
+        //     }
+        // }
+
+        // // 3. Jika Tower musuh ditemukan, lakukan aksi
+        // if (targetEnemyTower != null) {
+        //     MapLocation towerLoc = targetEnemyTower.getLocation();
+        //     Direction dirToTower = rc.getLocation().directionTo(towerLoc);
+            
+        //     // A. Coba bergerak mendekati tower (jika belum cooldown jalan & tidak terhalang)
+        //     if (rc.canMove(dirToTower)) {
+        //         rc.move(dirToTower);
+        //     }
+            
+        //     // B. Coba serang tower (jika jaraknya sudah masuk jangkauan attack)
+        //     if (rc.canAttack(towerLoc)) {
+        //         rc.attack(towerLoc);
+        //         rc.setIndicatorString("Menyerang Tower Musuh di " + towerLoc);
+        //     }
+            
+        //     // Jika Anda memakai ini di dalam fungsi terpisah, Anda bisa me-return true di sini
+        //     // return true; 
+        // }
 
         // Move and attack randomly if no objective.
         if(!hasAssignedDirection){
